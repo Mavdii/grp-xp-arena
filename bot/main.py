@@ -1,10 +1,9 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Telegram Bot - نظام XP والمستويات والعملات
+Telegram Bot - نظام XP والمستويات والعملات مع Supabase
 مطور بواسطة: Assistant
-الإصدار: 1.0.0
+الإصدار: 2.0.0
 """
 
 import asyncio
@@ -13,6 +12,7 @@ import os
 import random
 from datetime import datetime, timedelta, date
 from typing import Optional, Dict, List, Tuple
+from dotenv import load_dotenv
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -20,12 +20,15 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters
 )
 
-from database import DatabaseManager
+from supabase_database import SupabaseManager
 from models import User, UserGroup, Level, ShopItem, Badge, DailyQuest, Clan
 from utils import (
     format_number, calculate_xp_gain, calculate_coin_gain,
     check_level_up, get_progress_bar, format_time_remaining
 )
+
+# تحميل متغيرات البيئة
+load_dotenv()
 
 # إعداد التسجيل
 logging.basicConfig(
@@ -35,10 +38,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class TelegramBot:
-    def __init__(self, token: str, db_config: Dict):
+    def __init__(self, token: str):
         """تهيئة البوت"""
         self.token = token
-        self.db = DatabaseManager(db_config)
+        self.db = SupabaseManager()
         self.application = Application.builder().token(token).build()
         self.setup_handlers()
         
@@ -86,7 +89,7 @@ class TelegramBot:
         
         # معالج الأزرار
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
-        
+    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """أمر البداية"""
         if update.effective_chat.type == 'private':
@@ -266,7 +269,7 @@ class TelegramBot:
                 clan_info = f"🏰 الكلان: {clan.name}\n"
         
         # تاريخ الانضمام
-        join_date = user_group.joined_at.strftime("%Y-%m-%d")
+        join_date = user_group.joined_at.strftime("%Y-%m-%d") if user_group.joined_at else "غير معروف"
         
         profile_text = f"👤 الملف الشخصي: {update.effective_user.first_name}\n"
         profile_text += f"{'='*30}\n\n"
@@ -351,7 +354,7 @@ class TelegramBot:
         
         for quest in quests:
             status_emoji = "✅" if quest.is_completed else "⏳"
-            progress_percent = (quest.current_progress / quest.target_value) * 100
+            progress_percent = (quest.current_progress / quest.target_value) * 100 if quest.target_value > 0 else 0
             
             daily_text += f"{status_emoji} {self.get_quest_name(quest.quest_type)}\n"
             daily_text += f"📊 التقدم: {quest.current_progress}/{quest.target_value} ({progress_percent:.0f}%)\n"
@@ -370,7 +373,7 @@ class TelegramBot:
         
         user_group = await self.get_user_group(update.effective_user.id, update.effective_chat.id)
         
-        if not user_group.clan_id:
+        if not user_group or not user_group.clan_id:
             await update.message.reply_text(
                 "🏰 لست عضواً في أي كلان!\n"
                 "استخدم /createclan <اسم> لإنشاء كلان جديد\n"
@@ -392,7 +395,7 @@ class TelegramBot:
         clan_text += f"👑 القائد: {leader_name}\n"
         clan_text += f"👥 الأعضاء: {clan.member_count}/{clan.max_members}\n"
         clan_text += f"⚡ XP الجماعي: {format_number(clan.total_xp)}\n"
-        clan_text += f"📅 تأسس في: {clan.created_at.strftime('%Y-%m-%d')}\n"
+        clan_text += f"📅 تأسس في: {clan.created_at.strftime('%Y-%m-%d') if clan.created_at else 'غير معروف'}\n"
         
         if clan.description:
             clan_text += f"📝 الوصف: {clan.description}\n"
@@ -418,7 +421,7 @@ class TelegramBot:
         
         # التحقق من cooldown
         user_group = await self.get_user_group(update.effective_user.id, update.effective_chat.id)
-        if user_group.last_xp_gain:
+        if user_group and user_group.last_xp_gain:
             time_diff = datetime.now() - user_group.last_xp_gain
             if time_diff.total_seconds() < self.XP_COOLDOWN:
                 return  # المستخدم ما زال في فترة الانتظار
@@ -662,20 +665,11 @@ class TelegramBot:
     
     def run(self):
         """تشغيل البوت"""
-        print("🤖 بدء تشغيل البوت...")
+        print("🤖 بدء تشغيل البوت مع Supabase...")
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # نقطة البداية
 if __name__ == "__main__":
-    # إعدادات قاعدة البيانات
-    DB_CONFIG = {
-        'host': os.getenv('DB_HOST', 'localhost'),
-        'port': int(os.getenv('DB_PORT', 5432)),
-        'database': os.getenv('DB_NAME', 'telegram_bot'),
-        'user': os.getenv('DB_USER', 'postgres'),
-        'password': os.getenv('DB_PASSWORD', 'password')
-    }
-    
     # توكن البوت
     BOT_TOKEN = os.getenv('BOT_TOKEN')
     
@@ -685,5 +679,5 @@ if __name__ == "__main__":
         exit(1)
     
     # إنشاء وتشغيل البوت
-    bot = TelegramBot(BOT_TOKEN, DB_CONFIG)
+    bot = TelegramBot(BOT_TOKEN)
     bot.run()
